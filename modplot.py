@@ -10,6 +10,7 @@ from six.moves import xrange
 from scipy.interpolate import interp1d
 
 import numpy as np
+import xarray as xr
 import matplotlib
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
@@ -25,16 +26,13 @@ def velovect(axes, x, y, u, v, linewidth=None, color=None,
                scale=1.0, grains=15):
     """Draws streamlines of a vector flow.
 
+    *axes* : `~matplotlib.axes`
+        axes to draw in.
     *x*, *y* : 1d arrays
         an *evenly spaced* grid.
     *u*, *v* : 2d arrays
         x and y-velocities. Number of rows should match length of y, and
         the number of columns should match x.
-    *density* : float or 2-tuple
-        Controls the closeness of streamlines. When `density = 1`, the domain
-        is divided into a 30x30 grid---*density* linearly scales this grid.
-        Each cell in the grid can have, at most, one traversing streamline.
-        For different densities in each direction, use [density_x, density_y].
     *linewidth* : numeric or 2d array
         vary linewidth when given a 2d array with the same shape as velocities.
     *color* : matplotlib color code, or 2d array
@@ -51,15 +49,17 @@ def velovect(axes, x, y, u, v, linewidth=None, color=None,
     *arrowstyle* : str
         Arrow style specification.
         See :class:`~matplotlib.patches.FancyArrowPatch`.
-    *minlength* : float
-        Minimum length of streamline in axes coordinates.
+    *transform* : `~matplotlib.transforms.Transform`
+        Transform from your data to the plot display coordinate system.
+    *zorder* : int
+        any number
     *start_points*: Nx2 array
         Coordinates of starting points for the streamlines.
         In data coordinates, the same as the ``x`` and ``y`` arrays.
-    *zorder* : int
-        any number
     *scale* : float
         Maximum length of streamline in axes coordinates.
+    *grains* : float
+        Parameter to control resolution.
 
     Returns:
 
@@ -128,17 +128,17 @@ def velovect(axes, x, y, u, v, linewidth=None, color=None,
     v = np.ma.masked_invalid(v)
     magnitude = np.sqrt(u**2 + v**2)
     magnitude/=np.max(magnitude)
-	
+
     resolution = scale/grains
     minlength = .9*resolution
     integrate = get_integrator(u, v, dmap, minlength, resolution, magnitude)
 
     trajectories = []
     edges = []
-    
+
     if start_points is None:
         start_points=_gen_starting_points(x,y,grains)
-    
+
     sp2 = np.asanyarray(start_points, dtype=float).copy()
 
     # Check if start_points are outside the data boundaries
@@ -174,14 +174,14 @@ def velovect(axes, x, y, u, v, linewidth=None, color=None,
     for t, edge in zip(trajectories,edges):
         tgx = np.array(t[0])
         tgy = np.array(t[1])
-        
-		
+
+
         # Rescale from grid-coordinates to data-coordinates.
         tx, ty = dmap.grid2data(*np.array(t))
         tx += grid.x_origin
         ty += grid.y_origin
 
-        
+
         points = np.transpose([tx, ty]).reshape(-1, 1, 2)
         streamlines.extend(np.hstack([points[:-1], points[1:]]))
 
@@ -200,22 +200,22 @@ def velovect(axes, x, y, u, v, linewidth=None, color=None,
             color_values = interpgrid(color, tgx, tgy)[:-1]
             line_colors.append(color_values)
             arrow_kw['color'] = cmap(norm(color_values[n]))
-        
+
         if not edge:
             p = patches.FancyArrowPatch(
                 arrow_tail, arrow_head, transform=transform, **arrow_kw)
         else:
             continue
-        
+
         ds = np.sqrt((arrow_tail[0]-arrow_head[0])**2+(arrow_tail[1]-arrow_head[1])**2)
-        
+
         if ds<1e-15: continue #remove vanishingly short arrows that cause Patch to fail
-        
+
         axes.add_patch(p)
         arrows.append(p)
-        
-        
-		
+
+
+
     lc = mcollections.LineCollection(
         streamlines, transform=transform, **line_kw)
     lc.sticky_edges.x[:] = [grid.x_origin, grid.x_origin + grid.width]
@@ -231,7 +231,7 @@ def velovect(axes, x, y, u, v, linewidth=None, color=None,
     stream_container = StreamplotSet(lc, ac)
     return stream_container
 
-	
+
 
 class StreamplotSet(object):
 
@@ -297,18 +297,21 @@ class DomainMap(object):
         self.mask._current_xy = (xm, ym)
 
     def update_trajectory(self, xg, yg):
-        
+
         xm, ym = self.grid2mask(xg, yg)
         #self.mask._update_trajectory(xm, ym)
 
     def undo_trajectory(self):
         self.mask._undo_trajectory()
-        
+
 
 
 class Grid(object):
     """Grid of data."""
     def __init__(self, x, y):
+
+        x = x.values if isinstance(x, xr.DataArray) else x
+        y = y.values if isinstance(y, xr.DataArray) else y
 
         if x.ndim == 1:
             pass
@@ -442,13 +445,13 @@ def get_integrator(u, v, dmap, minlength, resolution, magnitude):
 
         stotal, x_traj, y_traj = 0., [], []
 
-        
+
         dmap.start_trajectory(x0, y0)
 
         dmap.reset_start_point(x0, y0)
         stotal, x_traj, y_traj, m_total, hit_edge = _integrate_rk12(x0, y0, dmap, forward_time, resolution, magnitude)
 
-        
+
         if len(x_traj)>1:
             return (x_traj, y_traj), hit_edge
         else:  # reject short trajectories
@@ -502,7 +505,7 @@ def _integrate_rk12(x0, y0, dmap, f, resolution, magnitude):
     yf_traj = []
     m_total = []
     hit_edge = False
-    
+
     while dmap.grid.within_grid(xi, yi):
         xf_traj.append(xi)
         yf_traj.append(yi)
@@ -534,12 +537,12 @@ def _integrate_rk12(x0, y0, dmap, f, resolution, magnitude):
         if error < maxerror:
             xi += dx2
             yi += dy2
-            
+
             dmap.update_trajectory(xi, yi)
-            
+
             if not dmap.grid.within_grid(xi, yi):
                 hit_edge=True
-            
+
             if (stotal + ds) > resolution*np.mean(m_total):
                 break
             stotal += ds
@@ -584,7 +587,7 @@ def interpgrid(a, xi, yi):
     """Fast 2D, linear interpolation on an integer grid"""
 
     Ny, Nx = np.shape(a)
-    if isinstance(xi, np.ndarray):
+    if isinstance(xi, np.ndarray) or isinstance(xi, float):
         x = xi.astype(int)
         y = yi.astype(int)
         # Check that xn, yn don't exceed max index
@@ -621,15 +624,15 @@ def interpgrid(a, xi, yi):
 
 
 def _gen_starting_points(x,y,grains):
-    
+
     eps = np.finfo(np.float32).eps
-    
+
     tmp_x =  np.linspace(x.min()+eps, x.max()-eps, grains)
     tmp_y =  np.linspace(y.min()+eps, y.max()-eps, grains)
-    
+
     xs = np.tile(tmp_x, grains)
     ys = np.repeat(tmp_y, grains)
 
     seed_points = np.array([list(xs), list(ys)])
-    
+
     return seed_points.T
