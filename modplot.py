@@ -59,7 +59,7 @@ def velovect(axes, x, y, u, v, linewidth=None, color=None,
     *scale* : float
         Maximum length of streamline in axes coordinates.
     *grains* : float
-        Parameter to control resolution.
+        Parameter to control vectors density.
 
     Returns:
 
